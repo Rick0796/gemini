@@ -3,15 +3,47 @@ import { CourseModule, LessonType, CourseType, Message, GeminiResponse, SessionR
 import { GoogleGenAI } from "@google/genai";
 
 // ==========================================
-// GEMINI API CONFIGURATION
+// GEMINI API CONFIGURATION (SAFE INIT)
 // ==========================================
 let ai: GoogleGenAI | null = null;
-try {
-  if (process.env.API_KEY) {
-    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+const getApiKey = (): string | undefined => {
+  try {
+    // Check for Vite environment
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
+      // @ts-ignore
+      return import.meta.env.VITE_API_KEY;
+    }
+    // Check for standard Node/Webpack environment
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      // @ts-ignore
+      return process.env.API_KEY;
+    }
+    // Check for Create React App environment
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_KEY) {
+      // @ts-ignore
+      return process.env.REACT_APP_API_KEY;
+    }
+  } catch (e) {
+    return undefined;
   }
-} catch (e) {
-  console.warn("Gemini API Key not found, falling back to advanced simulation engine.");
+  return undefined;
+};
+
+const apiKey = getApiKey();
+
+if (apiKey) {
+  try {
+    ai = new GoogleGenAI({ apiKey: apiKey });
+    console.log("Gemini API Initialized Successfully");
+  } catch (e) {
+    console.error("Failed to initialize Gemini API:", e);
+  }
+} else {
+  console.warn("Gemini API Key not found. Falling back to ADVANCED SIMULATION ENGINE (Offline Mode).");
 }
 
 // ==========================================
