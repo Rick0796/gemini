@@ -1,27 +1,26 @@
-
 import { CourseModule, LessonType, CourseType, Message, GeminiResponse, SessionReport, TacticGenerationResponse, CoachMessage } from './types';
 import { GoogleGenAI } from "@google/genai";
 
 // ==========================================
-// GEMINI API CONFIGURATION (SAFE INIT)
+// GEMINI API CONFIGURATION (LAZY SAFE INIT)
 // ==========================================
-let ai: GoogleGenAI | null = null;
+
+// Singleton instance holder
+let aiInstance: GoogleGenAI | null = null;
+let isInitialized = false;
 
 const getApiKey = (): string | undefined => {
   try {
-    // Check for Vite environment
     // @ts-ignore
     if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_KEY) {
       // @ts-ignore
       return import.meta.env.VITE_API_KEY;
     }
-    // Check for standard Node/Webpack environment
     // @ts-ignore
     if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
       // @ts-ignore
       return process.env.API_KEY;
     }
-    // Check for Create React App environment
     // @ts-ignore
     if (typeof process !== 'undefined' && process.env && process.env.REACT_APP_API_KEY) {
       // @ts-ignore
@@ -33,18 +32,25 @@ const getApiKey = (): string | undefined => {
   return undefined;
 };
 
-const apiKey = getApiKey();
+// Lazy getter for AI instance
+const getAI = (): GoogleGenAI | null => {
+  if (isInitialized) return aiInstance;
 
-if (apiKey) {
-  try {
-    ai = new GoogleGenAI({ apiKey: apiKey });
-    console.log("Gemini API Initialized Successfully");
-  } catch (e) {
-    console.error("Failed to initialize Gemini API:", e);
+  const apiKey = getApiKey();
+  if (apiKey) {
+    try {
+      aiInstance = new GoogleGenAI({ apiKey: apiKey });
+      console.log("Gemini API Initialized Successfully");
+    } catch (e) {
+      console.error("Failed to initialize Gemini API:", e);
+    }
+  } else {
+    console.warn("Gemini API Key not found. Falling back to ADVANCED SIMULATION ENGINE (Offline Mode).");
   }
-} else {
-  console.warn("Gemini API Key not found. Falling back to ADVANCED SIMULATION ENGINE (Offline Mode).");
-}
+  
+  isInitialized = true;
+  return aiInstance;
+};
 
 // ==========================================
 // EDUCATIONAL DATABASE v1.0.0 (The Encyclopedia)
@@ -554,7 +560,9 @@ const COACH_KNOWLEDGE_BASE: Record<string, string> = {
 };
 
 export const askLessonCoach = async (question: string, lessonContext: string, lessonId?: string): Promise<CoachMessage> => {
-    // 1. Try Real Gemini API if available
+    // 1. Try Real Gemini API if available (Lazy Init)
+    const ai = getAI();
+    
     if (ai) {
       try {
         const systemInstruction = `
