@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Lesson, LessonType, CourseType, CoachMessage } from '../types';
-import { ArrowLeft, Check, X, AlertCircle, Lightbulb, ChevronRight, Bot, Send, Sparkles, MessageSquare, Minimize2, BookOpen } from 'lucide-react';
-import { askLessonCoach } from '../constants';
+import { Lesson, LessonType, CourseType, CoachMessage, PracticeResult, LessonPage } from '../types';
+import { ArrowLeft, Check, X, ChevronRight, ChevronLeft, Bot, Send, Sparkles, MessageSquare, Minimize2, BookOpen, Layers, Swords, Zap } from 'lucide-react';
+import { askLessonCoach, evaluatePractice } from '../constants';
 
 interface LessonViewProps {
   lesson: Lesson;
@@ -20,9 +20,23 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
     ? 'bg-gradient-to-br from-rose-900/40 via-[#050505] to-[#050505]' 
     : 'bg-gradient-to-br from-cyan-900/40 via-[#050505] to-[#050505]';
 
+  // --- PAGINATION STATE ---
+  const [currentPage, setCurrentPage] = useState(0);
+  
+  // Safe access to pages
+  const pages: LessonPage[] = lesson.pages && lesson.pages.length > 0 ? lesson.pages : [{ title: "概览", content: lesson.description || "内容加载中...", type: "text" }];
+  const totalPages = pages.length;
+  const activePage = pages[currentPage];
+  const progressPercent = ((currentPage + 1) / totalPages) * 100;
+
   const [quizSelected, setQuizSelected] = useState<number | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
+
+  // AI Practice State
+  const [practiceInput, setPracticeInput] = useState('');
+  const [practiceResult, setPracticeResult] = useState<PracticeResult | null>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
   // AI Coach State
   const [isCoachOpen, setIsCoachOpen] = useState(false);
@@ -34,6 +48,29 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
   
   const coachScrollRef = useRef<HTMLDivElement>(null);
   const coachPanelRef = useRef<HTMLDivElement>(null);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // Reset page state when lesson changes
+  useEffect(() => {
+    setCurrentPage(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setIsCorrect(false);
+    setPracticeInput('');
+    setPracticeResult(null);
+    setIsEvaluating(false);
+    setCoachMessages([{ id: 'init', sender: 'coach', content: `你好，我是你的专属沟通教练。关于本节课《${lesson.title.split(':')[0]}》，你有什么想深入探讨的吗？` }]);
+  }, [lesson.id]);
+
+  // Reset practice state when page changes
+  useEffect(() => {
+    setPracticeInput('');
+    setPracticeResult(null);
+    setIsEvaluating(false);
+    if (contentScrollRef.current) {
+        contentScrollRef.current.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [currentPage]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -42,14 +79,13 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
     }
   }, [coachMessages, isCoachThinking, isCoachOpen]);
 
-  // Click outside to close
+  // Click outside to close coach
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (coachPanelRef.current && !coachPanelRef.current.contains(event.target as Node)) {
         setIsCoachOpen(false);
       }
     };
-
     if (isCoachOpen) {
       document.addEventListener('mousedown', handleClickOutside);
     }
@@ -66,29 +102,69 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
     setCoachInput('');
     setIsCoachThinking(true);
 
-    // Pass lesson ID for context-aware simulation
-    const context = lesson.content.theory || lesson.description;
+    const currentPageContent = activePage.content;
+    const context = `LESSON: ${lesson.title}\nCONTEXT: ${currentPageContent}`;
+    
     const response = await askLessonCoach(userMsg.content, context, lesson.id);
     
     setIsCoachThinking(false);
     setCoachMessages(prev => [...prev, response]);
   };
 
+  const handlePracticeSubmit = async () => {
+      if (!practiceInput.trim() || !activePage.practice_id) return;
+      setIsEvaluating(true);
+      try {
+          const result = await evaluatePractice(activePage.practice_id, practiceInput);
+          setPracticeResult(result);
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setIsEvaluating(false);
+      }
+  };
+
   const handleQuizSubmit = () => {
-    if (quizSelected === null || !lesson.content.quiz_options) return;
+    if (quizSelected === null || !lesson.quiz_data) return;
     setQuizSubmitted(true);
-    const correct = lesson.content.quiz_options[quizSelected].isCorrect;
+    const correct = lesson.quiz_data.options[quizSelected].isCorrect;
     setIsCorrect(correct);
   };
 
-  const renderContent = (text?: string) => {
-    if (!text) return null;
-    return text.split('\n').map((line, i) => (
-      line.trim() ? <p key={i} className="mb-6 text-lg leading-8 tracking-wide text-gray-200 font-light">{line}</p> : null
-    ));
+  const handleNextPage = () => {
+    if (currentPage < totalPages - 1) {
+      setCurrentPage(prev => prev + 1);
+    }
   };
 
-  // 1. BOSS FIGHT VIEW (Unchanged)
+  const handlePrevPage = () => {
+    if (currentPage > 0) {
+      setCurrentPage(prev => prev - 1);
+    }
+  };
+
+  const renderTextContent = (text: string) => {
+    if (!text) return null;
+    return text.split('\n').map((line, i) => {
+      const trimmed = line.trim();
+      if (!trimmed) return <div key={i} className="h-4"></div>;
+      
+      const parts = trimmed.split(/(\*\*.*?\*\*)/g);
+      
+      return (
+        <p key={i} className="mb-4 text-lg md:text-xl leading-8 tracking-wide text-gray-200 font-light">
+          {parts.map((part, idx) => {
+              if (part.startsWith('**') && part.endsWith('**')) {
+                  return <strong key={idx} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+              }
+              return part;
+          })}
+        </p>
+      );
+    });
+  };
+
+  // 1. BOSS FIGHT VIEW
   if (lesson.type === LessonType.BOSS_FIGHT) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center p-6 animate-fade-in relative overflow-hidden bg-[#050505]">
@@ -100,156 +176,216 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
           <h2 className="text-4xl font-bold text-white mb-4 tracking-tight">{lesson.title}</h2>
           <p className="text-gray-400 mb-10 text-lg leading-relaxed font-light">{lesson.description}</p>
           <div className="flex gap-4 justify-center">
-            <button onClick={onBack} className="px-8 py-3.5 rounded-full border border-white/10 hover:bg-white/5 text-gray-400 transition font-medium">LATER</button>
-            <button onClick={onStartSimulation} className={`px-12 py-3.5 rounded-full font-bold text-white shadow-xl hover:scale-105 transition-all ${themeBg}`}>ENTER ARENA</button>
+            <button onClick={onBack} className="px-8 py-3.5 rounded-full border border-white/10 hover:bg-white/5 text-gray-400 transition font-medium">稍后</button>
+            <button onClick={onStartSimulation} className={`px-12 py-3.5 rounded-full font-bold text-white shadow-xl hover:scale-105 transition-all ${themeBg}`}>开始挑战</button>
           </div>
         </div>
       </div>
     );
   }
 
-  // 2. THEORY & QUIZ VIEW
+  // 2. BOOK / THEORY VIEW
   return (
-    <div className="w-full h-full flex flex-col bg-[#050505] overflow-y-auto font-sans relative selection:bg-white/20">
+    <div className="w-full h-full flex flex-col bg-[#050505] font-sans relative selection:bg-white/20 overflow-hidden">
       {/* Background Ambience */}
       <div className={`fixed inset-0 pointer-events-none opacity-30 ${gradientOverlay}`}></div>
       <div className="fixed inset-0 pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
 
-      {/* Modern Navbar - Expanded & English Font */}
-      <div className="h-24 flex items-center justify-between px-6 md:px-12 sticky top-0 z-50 backdrop-blur-xl bg-[#050505]/80 border-b border-white/5 shadow-2xl">
+      {/* Navbar */}
+      <div className="h-24 flex items-center justify-between px-6 md:px-12 shrink-0 z-40 backdrop-blur-xl bg-[#050505]/80 border-b border-white/5 shadow-2xl relative">
         <button onClick={onBack} className="group flex items-center gap-4 text-gray-400 hover:text-white transition">
           <div className="w-10 h-10 rounded-full border border-white/10 flex items-center justify-center group-hover:bg-white/10 transition">
             <ArrowLeft size={18} />
           </div>
-          <div className="flex flex-col items-start">
-             <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-gray-500 group-hover:text-white transition-colors">Return to</span>
-             <span className="text-sm font-bold font-mono tracking-wider">CURRICULUM</span>
+          <div className="flex flex-col items-start hidden md:flex">
+             <span className="text-[10px] uppercase tracking-[0.2em] font-mono text-gray-500 group-hover:text-white transition-colors">返回</span>
+             <span className="text-sm font-bold font-mono tracking-wider">课程大纲</span>
           </div>
         </button>
+        
+        {/* Reading Progress (Visual Only) */}
+        <div className="flex flex-col items-center w-1/3">
+           <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+              <div className={`h-full transition-all duration-500 ease-out ${themeBg}`} style={{ width: `${progressPercent}%` }}></div>
+           </div>
+        </div>
+
         <div className="flex flex-col items-end">
-          <span className={`text-xs font-bold uppercase tracking-[0.2em] font-mono mb-1 ${themeText}`}>{courseType} INTELLIGENCE</span>
-          <span className="text-[10px] text-gray-600 font-mono tracking-widest">LESSON {lesson.id.split('_').slice(1).join('.')}</span>
+          <span className={`text-xs font-bold uppercase tracking-[0.2em] font-mono mb-1 ${themeText}`}>{courseType === CourseType.RED ? '情感' : '逻辑'}心智模型</span>
         </div>
       </div>
 
-      <div className="relative z-10 max-w-4xl mx-auto w-full p-6 md:p-12 pb-40 animate-fade-in-up">
-        {/* Header */}
-        <div className="mb-16">
-          <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest mb-6 ${themeText}`}>
-            <BookOpen size={12} />
-            {lesson.type}
-          </div>
-          <h1 className="text-4xl md:text-6xl font-bold text-white mb-8 leading-tight tracking-tight font-sans">{lesson.title}</h1>
-          <p className="text-xl md:text-2xl text-gray-400 font-light leading-relaxed border-l-2 border-white/10 pl-6">{lesson.description}</p>
-        </div>
-
-        {/* --- THEORY CONTENT --- */}
-        {lesson.type === LessonType.THEORY && (
-          <div className="space-y-16">
+      {/* Main Content Area (Scrollable) */}
+      <div className="flex-1 overflow-y-auto relative z-10 scroll-smooth pb-32" ref={contentScrollRef}>
+         <div className="max-w-4xl mx-auto w-full p-6 md:p-12 animate-fade-in-up">
             
-            {/* Main Theory Card */}
-            <div className="bg-[#111]/80 backdrop-blur-md border border-white/10 rounded-[2rem] p-8 md:p-14 shadow-2xl relative overflow-hidden">
-               {/* Decorative Element */}
-               <div className={`absolute top-0 left-0 w-2 h-full ${themeBg}`}></div>
-               <div className="prose prose-invert prose-lg max-w-none prose-headings:font-bold prose-headings:tracking-tight prose-p:text-gray-300 prose-strong:text-white">
-                  {renderContent(lesson.content.theory)}
+            {/* Page Header */}
+            <div className="mb-8" key={`header-${currentPage}`}>
+               <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-widest mb-4 ${themeText}`}>
+                 {activePage.type === 'case_analysis' && <Layers size={12} />}
+                 {activePage.type === 'text' && <BookOpen size={12} />}
+                 {activePage.type === 'ai_practice' && <Swords size={12} />}
+                 {activePage.type === 'key_takeaway' && <Sparkles size={12} />}
+                 
+                 {activePage.type === 'case_analysis' ? '案例拆解' : 
+                  activePage.type === 'ai_practice' ? '实战演练' :
+                  activePage.type === 'key_takeaway' ? '核心总结' : '理论解析'}
                </div>
+               <h1 className="text-3xl md:text-5xl font-bold text-white leading-tight tracking-tight font-sans animate-fade-in">{activePage.title}</h1>
             </div>
 
-            {/* Key Concepts Sidebar (Inline for mobile) */}
-            {lesson.content.key_concepts && (
-              <div className="flex flex-wrap gap-3">
-                 {lesson.content.key_concepts.map((concept, idx) => (
-                    <span key={idx} className="px-4 py-2 rounded-full border border-white/10 bg-white/5 text-xs font-mono uppercase tracking-wider text-gray-400 hover:text-white hover:border-white/30 transition-colors cursor-default">
-                      # {concept}
-                    </span>
-                 ))}
-              </div>
+            {/* AI PRACTICE CARD */}
+            {activePage.type === 'ai_practice' ? (
+                <div key={`practice-${currentPage}`} className="bg-[#111]/80 backdrop-blur-md border border-yellow-500/20 rounded-[2rem] p-8 md:p-14 shadow-2xl relative overflow-hidden min-h-[400px] animate-fade-in">
+                    <div className="absolute top-0 left-0 w-2 h-full bg-yellow-500/50"></div>
+                    
+                    <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-3">
+                        <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-500"><Swords size={20} /></div>
+                        场景模拟
+                    </h3>
+                    <p className="text-lg text-gray-300 mb-8 leading-relaxed font-light border-l-2 border-white/10 pl-6">
+                        {activePage.content}
+                    </p>
+
+                    <div className="space-y-4">
+                        <textarea
+                            value={practiceInput}
+                            onChange={(e) => setPracticeInput(e.target.value)}
+                            disabled={isEvaluating || !!practiceResult}
+                            placeholder="在这里输入你的回复..."
+                            className="w-full bg-black/50 border border-white/10 rounded-2xl p-6 text-white placeholder-gray-600 focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/50 transition-all resize-none h-32"
+                        />
+                        
+                        {!practiceResult ? (
+                            <button 
+                                onClick={handlePracticeSubmit}
+                                disabled={!practiceInput.trim() || isEvaluating}
+                                className={`w-full py-4 rounded-xl font-bold uppercase tracking-widest transition-all
+                                    ${practiceInput.trim() && !isEvaluating ? 'bg-yellow-600 hover:bg-yellow-500 text-black shadow-lg hover:shadow-yellow-500/20' : 'bg-gray-800 text-gray-500 cursor-not-allowed'}`}
+                            >
+                                {isEvaluating ? 'AI 正在评分...' : '提交考核'}
+                            </button>
+                        ) : (
+                            <div className="mt-8 animate-fade-in-up">
+                                <div className={`p-6 rounded-2xl border ${practiceResult.sentiment === 'GOOD' ? 'bg-green-900/10 border-green-500/30' : practiceResult.sentiment === 'BAD' ? 'bg-red-900/10 border-red-500/30' : 'bg-gray-800/50 border-gray-600/30'}`}>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`text-2xl font-bold ${practiceResult.sentiment === 'GOOD' ? 'text-green-500' : practiceResult.sentiment === 'BAD' ? 'text-red-500' : 'text-gray-400'}`}>
+                                                {practiceResult.score}分
+                                            </div>
+                                            <div className="text-xs uppercase tracking-wider font-mono text-gray-500">AI 评分</div>
+                                        </div>
+                                        {practiceResult.sentiment === 'GOOD' && <Check className="text-green-500" />}
+                                        {practiceResult.sentiment === 'BAD' && <X className="text-red-500" />}
+                                    </div>
+                                    <p className="text-gray-200 leading-relaxed italic">
+                                        "{practiceResult.feedback}"
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={() => { setPracticeResult(null); setPracticeInput(''); }}
+                                    className="mt-4 w-full py-3 border border-white/10 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition uppercase text-xs tracking-widest"
+                                >
+                                    再试一次
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                /* STANDARD TEXT CONTENT */
+                <div key={`content-${currentPage}`} className="bg-[#111]/80 backdrop-blur-md border border-white/10 rounded-[2rem] p-8 md:p-14 shadow-2xl relative overflow-hidden min-h-[400px] animate-fade-in">
+                    <div className={`absolute top-0 left-0 w-2 h-full ${themeBg}`}></div>
+                    <div className="prose prose-invert prose-lg max-w-none">
+                        {renderTextContent(activePage.content)}
+                    </div>
+                </div>
             )}
 
-            {/* Examples Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="bg-[#1a0505] border border-red-500/20 rounded-[2rem] p-8 relative overflow-hidden group hover:border-red-500/40 transition-colors">
-                <h3 className="text-red-400 font-bold mb-6 flex items-center gap-3 text-xs uppercase tracking-[0.2em] font-mono">
-                  <span className="w-2 h-2 rounded-full bg-red-500"></span> Bad Example
-                </h3>
-                <p className="text-gray-300 italic text-lg leading-relaxed relative z-10 border-l border-red-500/30 pl-4">
-                  "{lesson.content.bad_example}"
-                </p>
+            {/* --- QUIZ SECTION (Only on last page) --- */}
+            {currentPage === totalPages - 1 && lesson.quiz_data && (
+              <div className="mt-20 border-t border-white/10 pt-16 animate-fade-in">
+                 <h2 className="text-2xl font-bold text-white mb-8 text-center">知识点考核</h2>
+                 <div className="space-y-8 max-w-2xl mx-auto">
+                     <div className="bg-[#161616] border border-white/10 rounded-[2rem] p-8 md:p-12 shadow-2xl relative">
+                        <p className="text-xl font-medium text-white mb-10 leading-relaxed">{lesson.quiz_data.question}</p>
+                        <div className="space-y-4">
+                          {lesson.quiz_data.options.map((option, idx) => (
+                            <button
+                              key={idx}
+                              onClick={() => !quizSubmitted && setQuizSelected(idx)}
+                              disabled={quizSubmitted}
+                              className={`w-full text-left p-6 rounded-2xl border transition-all duration-200 flex items-start justify-between group
+                                ${quizSubmitted
+                                  ? (option.isCorrect ? 'bg-green-500/10 border-green-500 text-white' : (quizSelected === idx ? 'bg-red-500/10 border-red-500 text-white' : 'bg-white/5 border-transparent opacity-40'))
+                                  : (quizSelected === idx ? `bg-white/10 border-white text-white` : 'bg-white/5 border-white/5 hover:bg-white/10 text-gray-300 hover:border-white/20')}`}
+                            >
+                              <span className="text-lg leading-relaxed">{option.text}</span>
+                              {quizSubmitted && option.isCorrect && <Check size={24} className="text-green-500 ml-4 shrink-0" />}
+                              {quizSubmitted && !option.isCorrect && quizSelected === idx && <X size={24} className="text-red-500 ml-4 shrink-0" />}
+                            </button>
+                          ))}
+                        </div>
+                     </div>
+                     {!quizSubmitted ? (
+                       <button onClick={handleQuizSubmit} disabled={quizSelected === null} className={`w-full py-5 rounded-2xl font-bold text-white transition-all shadow-lg tracking-widest uppercase font-mono ${quizSelected !== null ? themeBg : 'bg-gray-800 cursor-not-allowed text-gray-500'}`}>提交答案</button>
+                     ) : (
+                       <div className={`p-8 rounded-[2rem] animate-fade-in ${isCorrect ? 'bg-green-900/10 border border-green-500/20' : 'bg-red-900/10 border border-red-500/20'}`}>
+                         <h4 className={`text-xl font-bold mb-3 font-mono uppercase tracking-wider ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>{isCorrect ? '回答正确' : '回答错误'}</h4>
+                         <p className="text-gray-300 text-lg mb-8 leading-relaxed">{lesson.quiz_data.options[quizSelected!].feedback}</p>
+                         {isCorrect ? (
+                           <button onClick={onComplete} className="flex items-center justify-center w-full gap-2 px-6 py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 transition font-mono uppercase tracking-widest">完成本课 <Check size={20} /></button>
+                         ) : (
+                           <button onClick={() => { setQuizSubmitted(false); setQuizSelected(null); }} className="w-full py-4 text-gray-400 hover:text-white border border-white/10 hover:bg-white/5 rounded-xl transition font-mono uppercase tracking-widest">重试</button>
+                         )}
+                       </div>
+                     )}
+                  </div>
               </div>
-              <div className="bg-[#051a10] border border-green-500/20 rounded-[2rem] p-8 relative overflow-hidden group hover:border-green-500/40 transition-colors">
-                <h3 className="text-green-400 font-bold mb-6 flex items-center gap-3 text-xs uppercase tracking-[0.2em] font-mono">
-                  <span className="w-2 h-2 rounded-full bg-green-500"></span> Good Example
-                </h3>
-                <p className="text-white font-medium text-lg leading-relaxed relative z-10 border-l border-green-500/50 pl-4">
-                  "{lesson.content.good_example}"
-                </p>
-              </div>
-            </div>
-
-            {/* Deep Dive */}
-            <div className="bg-gradient-to-r from-blue-900/10 to-transparent border border-blue-500/20 rounded-[2rem] p-8 md:p-10 flex flex-col md:flex-row gap-8 items-start">
-              <div className="p-4 bg-blue-500/10 rounded-2xl shrink-0"><Lightbulb className="text-blue-400" size={32} /></div>
-              <div>
-                 <h3 className="text-blue-400 font-bold mb-3 text-sm uppercase tracking-[0.2em] font-mono">Psychological Principle</h3>
-                 <p className="text-gray-300 leading-relaxed text-lg opacity-90">{lesson.content.why_it_works}</p>
-              </div>
-            </div>
-
-            <button onClick={onComplete} className={`w-full py-6 rounded-[1.5rem] font-bold text-white text-lg mt-8 hover:scale-[1.01] active:scale-[0.99] transition-all shadow-xl tracking-widest uppercase font-mono ${themeBg}`}>
-              Mark as Mastered
-            </button>
-          </div>
-        )}
-
-        {/* --- QUIZ CONTENT --- */}
-        {lesson.type === LessonType.QUIZ && (
-          <div className="space-y-8 max-w-2xl mx-auto mt-12">
-             <div className="bg-[#161616] border border-white/10 rounded-[2rem] p-8 md:p-12 shadow-2xl relative overflow-hidden">
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-[0.2em] mb-8 font-mono">Scenario Test</h3>
-                <p className="text-2xl font-medium text-white mb-12 leading-relaxed">{lesson.content.quiz_question}</p>
-                <div className="space-y-4">
-                  {lesson.content.quiz_options?.map((option, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => !quizSubmitted && setQuizSelected(idx)}
-                      disabled={quizSubmitted}
-                      className={`w-full text-left p-6 rounded-2xl border transition-all duration-200 flex items-start justify-between group
-                        ${quizSubmitted
-                          ? (option.isCorrect ? 'bg-green-500/10 border-green-500 text-white' : (quizSelected === idx ? 'bg-red-500/10 border-red-500 text-white' : 'bg-white/5 border-transparent opacity-40'))
-                          : (quizSelected === idx ? `bg-white/10 border-white text-white` : 'bg-white/5 border-white/5 hover:bg-white/10 text-gray-300 hover:border-white/20')}`}
-                    >
-                      <span className="text-lg leading-relaxed">{option.text}</span>
-                      {quizSubmitted && option.isCorrect && <Check size={24} className="text-green-500 ml-4 shrink-0" />}
-                      {quizSubmitted && !option.isCorrect && quizSelected === idx && <X size={24} className="text-red-500 ml-4 shrink-0" />}
+            )}
+            
+            {/* Completion Button (Only on last page if no quiz) */}
+            {currentPage === totalPages - 1 && !lesson.quiz_data && (
+                <div className="mt-12 text-center pb-24">
+                    <button onClick={onComplete} className={`px-12 py-5 rounded-full font-bold text-white text-lg hover:scale-105 active:scale-95 transition-all shadow-xl tracking-widest uppercase font-mono ${themeBg}`}>
+                        标记为完成
                     </button>
-                  ))}
                 </div>
-             </div>
-             {!quizSubmitted ? (
-               <button onClick={handleQuizSubmit} disabled={quizSelected === null} className={`w-full py-5 rounded-2xl font-bold text-white transition-all shadow-lg tracking-widest uppercase font-mono ${quizSelected !== null ? themeBg : 'bg-gray-800 cursor-not-allowed text-gray-500'}`}>Submit Answer</button>
-             ) : (
-               <div className={`p-8 rounded-[2rem] animate-fade-in ${isCorrect ? 'bg-green-900/10 border border-green-500/20' : 'bg-red-900/10 border border-red-500/20'}`}>
-                 <h4 className={`text-xl font-bold mb-3 font-mono uppercase tracking-wider ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>{isCorrect ? 'Correct Analysis' : 'Incorrect Strategy'}</h4>
-                 <p className="text-gray-300 text-lg mb-8 leading-relaxed">{lesson.content.quiz_options?.[quizSelected!].feedback}</p>
-                 {isCorrect ? (
-                   <button onClick={onComplete} className="flex items-center justify-center w-full gap-2 px-6 py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 transition font-mono uppercase tracking-widest">Complete Lesson <ChevronRight size={20} /></button>
-                 ) : (
-                   <button onClick={() => { setQuizSubmitted(false); setQuizSelected(null); }} className="w-full py-4 text-gray-400 hover:text-white border border-white/10 hover:bg-white/5 rounded-xl transition font-mono uppercase tracking-widest">Try Again</button>
-                 )}
-               </div>
-             )}
-          </div>
-        )}
-
-        {/* Footer Info */}
-        <div className="mt-20 pt-10 border-t border-white/5 text-center">
-            <p className="text-[10px] text-gray-600 font-mono uppercase tracking-widest">Insight Mind Academy v1.0.0 • All Rights Reserved</p>
-        </div>
+            )}
+         </div>
       </div>
 
-      {/* 3. AI LESSON COACH (Floating Action Button & Popup) */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end" ref={coachPanelRef}>
+      {/* --- FIXED PAGINATION FOOTER (ALWAYS VISIBLE) --- */}
+      <div className="h-20 shrink-0 bg-[#050505] border-t border-white/10 flex items-center justify-between px-6 md:px-12 z-50">
+           <button 
+             onClick={handlePrevPage}
+             disabled={currentPage === 0}
+             className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold transition-all shadow-lg active:scale-95
+               ${currentPage === 0 
+                 ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50' 
+                 : 'bg-white text-black hover:bg-gray-200 hover:scale-105 cursor-pointer'}`}
+           >
+             <ChevronLeft size={16} /> 上一页
+           </button>
+
+           <div className="text-xs font-mono text-gray-500 uppercase tracking-widest hidden md:block">
+             PAGE {currentPage + 1} / {totalPages}
+           </div>
+
+           <button 
+             onClick={handleNextPage}
+             disabled={currentPage >= totalPages - 1}
+             className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold transition-all shadow-lg active:scale-95
+               ${currentPage >= totalPages - 1 
+                  ? 'bg-gray-900 text-gray-600 cursor-not-allowed opacity-50' 
+                  : `${isRed ? 'bg-rose-500 hover:bg-rose-400' : 'bg-cyan-500 hover:bg-cyan-400'} text-black hover:scale-105 cursor-pointer`}`}
+           >
+             下一页 <ChevronRight size={16} />
+           </button>
+      </div>
+
+      {/* 3. AI LESSON COACH (Adjusted Position) */}
+      <div className="fixed bottom-24 right-6 z-[60] flex flex-col items-end" ref={coachPanelRef}>
         
         {/* Chat Popup */}
         <div className={`mb-4 w-[350px] md:w-[400px] bg-[#111]/95 backdrop-blur-xl border border-white/10 shadow-2xl rounded-[2rem] overflow-hidden flex flex-col transition-all duration-300 origin-bottom-right
@@ -262,8 +398,8 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
                 <Bot size={18} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Insight AI Coach</h3>
-                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-mono">v1.0.0 CONNECTED</p>
+                <h3 className="text-sm font-bold text-white">AI 助教</h3>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wider font-mono">v2.1.0 在线</p>
               </div>
             </div>
             <button onClick={() => setIsCoachOpen(false)} className="text-gray-400 hover:text-white"><Minimize2 size={18}/></button>
@@ -299,7 +435,7 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
                 value={coachInput}
                 onChange={(e) => setCoachInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCoachSend()}
-                placeholder="Ask me anything about this lesson..."
+                placeholder="对本页内容有疑问？问我..."
                 className="flex-1 bg-transparent border-none focus:ring-0 text-sm text-white placeholder-gray-500"
               />
               <button onClick={handleCoachSend} disabled={!coachInput.trim() || isCoachThinking} className={`p-1.5 rounded-full transition-all ${coachInput.trim() ? 'bg-white text-black hover:scale-110' : 'bg-gray-800 text-gray-500'}`}>
@@ -312,7 +448,7 @@ const LessonView: React.FC<LessonViewProps> = ({ lesson, courseType, onBack, onC
         {/* Floating Button */}
         <button 
           onClick={() => setIsCoachOpen(!isCoachOpen)}
-          className={`w-14 h-14 rounded-full shadow-[0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 border border-white/10
+          className={`w-14 h-14 rounded-full shadow-[0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 border border-white/10 relative z-50
             ${isCoachOpen ? 'bg-[#222] text-white rotate-90' : `${themeBg} text-white`}`}
         >
           {isCoachOpen ? <X size={24} /> : <MessageSquare size={24} />}
