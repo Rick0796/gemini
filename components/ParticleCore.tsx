@@ -26,22 +26,22 @@ class Particle {
     
     // Config based on mode
     if (mode === 'BLUE_DOOR') {
-      // Matrix rain / Digital Stream
-      this.size = Math.random() * 2 + 1; // Larger blocks
-      this.speedX = 0;
-      this.speedY = Math.random() * 2 + 1;
-      this.color = `rgba(6, 182, 212, ${Math.random() * 0.4 + 0.1})`; // Cyan-500 equivalent
+      // Matrix rain / Digital Stream (Vertical flow)
+      this.size = Math.random() * 1.5 + 0.5; 
+      this.speedX = 0; // Strictly vertical
+      this.speedY = Math.random() * 1.5 + 0.5;
+      this.color = `rgba(6, 182, 212, ${Math.random() * 0.4 + 0.1})`; // Cyan-500
     } else if (mode === 'RED_DOOR') {
-      // Synaptic Web / Blood Cells
-      this.size = Math.random() * 3 + 1; // Organic variable size
-      this.speedX = (Math.random() - 0.5) * 1;
-      this.speedY = (Math.random() - 0.5) * 1;
-      this.color = `rgba(244, 63, 94, ${Math.random() * 0.4 + 0.1})`; // Rose-500 equivalent
+      // Synaptic Web / Organic
+      this.size = Math.random() * 2 + 0.5; 
+      this.speedX = (Math.random() - 0.5) * 0.5;
+      this.speedY = (Math.random() - 0.5) * 0.5;
+      this.color = `rgba(244, 63, 94, ${Math.random() * 0.4 + 0.1})`; // Rose-500
     } else {
-      // Home: HD Nebula Dust
-      this.size = Math.random() * 1.5 + 0.5;
-      this.speedX = (Math.random() - 0.5) * 0.3;
-      this.speedY = (Math.random() - 0.5) * 0.3;
+      // Home: HD Nebula Dust (Slow, floating)
+      this.size = Math.random() * 1.5 + 0.1;
+      this.speedX = (Math.random() - 0.5) * 0.2;
+      this.speedY = (Math.random() - 0.5) * 0.2;
       this.color = `rgba(255, 255, 255, ${Math.random() * 0.5 + 0.1})`;
     }
     
@@ -53,31 +53,30 @@ class Particle {
     this.x += this.speedX;
     this.y += this.speedY;
 
-    // 2. Mouse Interaction (Repulsion or Attraction)
+    // 2. Mouse Interaction
     const dx = mouseX - this.x;
     const dy = mouseY - this.y;
     const distance = Math.hypot(dx, dy);
-    const forceDistance = 150;
+    const forceDistance = 120;
     
     if (distance < forceDistance) {
         if (this.mode === 'HOME') {
-            // Repulsion for Home (Parting clouds)
+            // Repulsion
             const forceDirectionX = dx / distance;
             const forceDirectionY = dy / distance;
             const force = (forceDistance - distance) / forceDistance;
-            const directionX = forceDirectionX * force * 2;
-            const directionY = forceDirectionY * force * 2;
-            this.x -= directionX;
-            this.y -= directionY;
-        } else {
-             // Subtle Attraction/Turbulence for Red/Blue
+            this.x -= forceDirectionX * force * 1.5;
+            this.y -= forceDirectionY * force * 1.5;
+        } else if (this.mode === 'RED_DOOR') {
+             // Attraction
             const force = (forceDistance - distance) / forceDistance;
-            this.x += dx * force * 0.01;
-            this.y += dy * force * 0.01;
+            this.x += dx * force * 0.02;
+            this.y += dy * force * 0.02;
         }
+        // Blue door ignores mouse x-axis to maintain vertical integrity
     }
 
-    // 3. Reset Logic (Boundary Check)
+    // 3. Boundary / Reset
     if (this.x < 0 || this.x > width || this.y < 0 || this.y > height) {
       if (this.mode === 'BLUE_DOOR') {
         // Rain falls from top
@@ -96,9 +95,8 @@ class Particle {
   draw(ctx: CanvasRenderingContext2D) {
     ctx.fillStyle = this.color;
     ctx.beginPath();
-    // Square for digital feel in Blue mode
     if (this.mode === 'BLUE_DOOR') {
-        ctx.rect(this.x, this.y, this.size, this.size * 2);
+        ctx.rect(this.x, this.y, this.size, this.size * 4); // Elongated digital rain
     } else {
         ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
     }
@@ -118,14 +116,12 @@ const ParticleCore: React.FC<ParticleCoreProps> = ({ mode }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Handle High DPI (Retina)
     const dpr = window.devicePixelRatio || 1;
 
     const initParticles = () => {
       particlesRef.current = [];
-      const baseCount = window.innerWidth < 768 ? 60 : 120;
-      // More particles for matrix rain
-      const count = mode === 'BLUE_DOOR' ? baseCount * 1.5 : baseCount; 
+      const baseCount = window.innerWidth < 768 ? 50 : 100;
+      const count = mode === 'BLUE_DOOR' ? baseCount * 1.2 : baseCount; 
       
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
@@ -136,7 +132,6 @@ const ParticleCore: React.FC<ParticleCoreProps> = ({ mode }) => {
     };
 
     const resize = () => {
-      // Scale canvas for HD
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       canvas.style.width = `${window.innerWidth}px`;
@@ -146,50 +141,42 @@ const ParticleCore: React.FC<ParticleCoreProps> = ({ mode }) => {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-        mouseRef.current = {
-            x: e.clientX,
-            y: e.clientY
-        };
+        mouseRef.current = { x: e.clientX, y: e.clientY };
     };
 
     const animate = () => {
       const width = window.innerWidth;
       const height = window.innerHeight;
 
-      // Trail effect logic
+      // Clear with trail effect
       if (mode === 'BLUE_DOOR') {
-          ctx.fillStyle = 'rgba(5, 5, 10, 0.1)'; // Long trails for rain
+          ctx.fillStyle = 'rgba(5, 5, 8, 0.15)'; // Darker trail for matrix
       } else {
-          ctx.fillStyle = 'rgba(5, 5, 10, 0.2)'; // Standard trail
+          ctx.fillStyle = 'rgba(5, 5, 8, 0.2)';
       }
       ctx.fillRect(0, 0, width, height);
 
-      // Draw connections
+      // Update & Draw
       const particles = particlesRef.current;
-      const connectionDistance = 100;
-      
       particles.forEach((p, i) => {
         p.update(width, height, mouseRef.current.x, mouseRef.current.y);
         p.draw(ctx);
 
-        // Connection Lines (Only for Red and Home, Matrix doesn't connect)
+        // Connections (Only for Red/Home)
         if (mode !== 'BLUE_DOOR') {
             for (let j = i; j < particles.length; j++) {
               const p2 = particles[j];
               const dx = p.x - p2.x;
               const dy = p.y - p2.y;
               const distance = Math.hypot(dx, dy);
+              const maxDist = 100;
     
-              if (distance < connectionDistance) {
+              if (distance < maxDist) {
                 ctx.beginPath();
-                const opacity = 1 - distance / connectionDistance;
-                
-                if (mode === 'RED_DOOR') {
-                   ctx.strokeStyle = `rgba(244, 63, 94, ${opacity * 0.2})`; // Rose
-                } else {
-                   ctx.strokeStyle = `rgba(120, 120, 150, ${opacity * 0.15})`; // Grey/White
-                }
-                
+                const opacity = 1 - distance / maxDist;
+                ctx.strokeStyle = mode === 'RED_DOOR' 
+                    ? `rgba(244, 63, 94, ${opacity * 0.15})`
+                    : `rgba(150, 150, 180, ${opacity * 0.1})`;
                 ctx.lineWidth = 0.5;
                 ctx.moveTo(p.x, p.y);
                 ctx.lineTo(p2.x, p2.y);
@@ -215,10 +202,9 @@ const ParticleCore: React.FC<ParticleCoreProps> = ({ mode }) => {
   }, [mode]);
 
   return (
-    <div className="absolute inset-0 z-0 bg-[#050508]">
+    <div className="absolute inset-0 z-0 bg-[#050505]">
       <canvas ref={canvasRef} className="block w-full h-full" />
-      {/* Vignette & Noise Overlay for Texture */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_120%)] pointer-events-none opacity-80"></div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_#000000_120%)] pointer-events-none opacity-60"></div>
     </div>
   );
 };
